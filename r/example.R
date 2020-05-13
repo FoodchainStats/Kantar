@@ -1,7 +1,4 @@
-library(tidyverse)
-library(tidyxl)
-library(unpivotr)
-library(here)
+pacman::p_load(tidyverse, tidyxl, unpivotr, here)
 
 source(here("r", "get_product_tables.R"))
 
