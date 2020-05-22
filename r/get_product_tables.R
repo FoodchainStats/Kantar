@@ -1,6 +1,76 @@
 
+findheader_total <- function(headerlist_total) {
+  rownumbers <- c()
+  for (i in 1:length(headerlist_total)) {
+    x <- cells_total %>%
+      filter(character==headerlist_total[i]) %>%
+      select(row)
+    rownumbers[i] <- x[[1]]
+  }
+  rownumbers[length(headerlist_total)+1] <- max(cells_total %>% select(row))+1
+  return(rownumbers)
+}
+
+findheader <- function(header="") {
+  rownumbers <- c()
+  for (s in 1:length(product_sheets)) {
+    x <- cells %>%
+      filter(sheet==product_sheets[s]) %>%
+      filter(character==header) %>%
+      select(row)
+    rownumbers[s] <- x[[1]]
+  }
+  return(rownumbers)
+}
+
+allheadermins <- function(headerlist=headerlist) {
+  allmins <- list()
+  for (i in 1:length(headerlist)) {
+    allmins[[i]] <- findheader(headerlist[i])
+  }
+  max <- c()
+  for (s in 1:length(product_sheets)) {
+    max[s] <- max(cells %>% filter(sheet==product_sheets[s]) %>% select(row))
+  }
+  allmins[[12]] <- max+1
+  return(allmins)
+}
+
+kpis_total <- function(cells_total){
+  cells_total %>% 
+    dplyr::filter(row <=14) %>% 
+    unpivotr::behead("N", week_ending) %>% 
+    unpivotr::behead("NNW", section) %>%
+    unpivotr::behead("W", kpi) %>%
+    dplyr::mutate(attribute = "All data") %>% 
+    dplyr::mutate(type = "Total") %>% 
+    dplyr::mutate(subtype = NA) %>% 
+    dplyr::mutate(product = "All") %>%
+    select(product,section, attribute, kpi, type, subtype, week_ending, value = numeric) %>% 
+    tidyr::drop_na(type)  
+}
+
+allproductskpis <- function(cells,FUN=kpis) {
+  x <- cells %>% 
+    group_by(sheet) %>% 
+    nest() %>% 
+    mutate(data = map(data, FUN)) %>%
+    unnest(cols=c(data)) %>%
+    rename(product = sheet)
+  return(x)
+}
+
+allproductsother <- function(cells,indent,FUN) {
+  x <- cells %>% 
+    group_by(sheet) %>% 
+    nest() %>% 
+    mutate(data = map(data, ~FUN(.,indent))) %>%
+    unnest(cols=c(data)) %>%
+    rename(product = sheet)
+  return(x)
+}
+
 kpis <- function(cells){
-  
   cells %>% 
   dplyr::filter(row <=6) %>% 
   unpivotr::behead("N", week_ending) %>% 
@@ -13,11 +83,8 @@ kpis <- function(cells){
   tidyr::drop_na(type)  
 }
 
-
-
 lifestage <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row >=8 & row <= 45) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>% 
   unpivotr::behead("NNW", attribute) %>% 
@@ -30,7 +97,6 @@ lifestage <- function(cells, indent){
 
 region <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row == 8 | row >=47 & row <= 99) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>% 
   unpivotr::behead("NNW", attribute) %>% 
@@ -43,7 +109,6 @@ region <- function(cells, indent){
 
 socclass_x_region <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row == 8 | row >=101 & row <= 441) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>% 
   unpivotr::behead("NNW", attribute) %>% 
@@ -56,7 +121,6 @@ socclass_x_region <- function(cells, indent){
 
 retailer_x_region <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row == 8 | row >=443 & row <= 1311) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>% 
   unpivotr::behead("NNW", attribute) %>% 
@@ -67,23 +131,20 @@ retailer_x_region <- function(cells, indent){
   tidyr::drop_na()
 }
 
-
-rural_urban <- function(cells, indent){
+rural_urban <- function(cells,indent) {
   cells %>% 
-  dplyr::filter(row == 1 | row == 8 | row >=1313 & row <= 1329) %>% 
-  unpivotr::behead("N", week_ending) %>% 
-  unpivotr::behead("NNW", section) %>% 
-  unpivotr::behead("NNW", attribute) %>% 
-  unpivotr::behead_if(indent[local_format_id] == 0, direction = "WNW", name = "kpi") %>% 
-  unpivotr::behead("W", type) %>% 
-  dplyr::mutate(subtype = NA) %>% 
-  select(section, attribute, kpi, type, subtype, week_ending, value = numeric) %>% 
-  tidyr::drop_na(type)
+    unpivotr::behead("N", week_ending) %>%
+    unpivotr::behead("NNW", section) %>% 
+    unpivotr::behead("NNW", attribute) %>% 
+    unpivotr::behead_if(indent[local_format_id] == 0, direction = "WNW", name = "kpi") %>% 
+    unpivotr::behead("W", type) %>% 
+    dplyr::mutate(subtype = NA) %>% 
+    select(section, attribute, kpi, type, subtype, week_ending, value = numeric) %>% 
+    tidyr::drop_na(type)
 }
 
 social_class <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row == 8 | row >=1331 & row <= 1359) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>% 
   unpivotr::behead("NNW", attribute) %>% 
@@ -96,7 +157,6 @@ social_class <- function(cells, indent){
 
 vulnerable_groups <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row == 8 | row >=1361 & row <= 1377) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>% 
   unpivotr::behead("NNW", attribute) %>% 
@@ -109,7 +169,6 @@ vulnerable_groups <- function(cells, indent){
 
 channel <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row >= 1379 & row <=1407) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>%
   unpivotr::behead_if(indent[local_format_id] == 0, direction = "WNW", name = "kpi") %>% 
@@ -122,7 +181,6 @@ channel <- function(cells, indent){
 
 retailer <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row >= 1409 & row <=1481) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>%
   unpivotr::behead_if(indent[local_format_id] == 0, direction = "WNW", name = "kpi") %>% 
@@ -133,9 +191,8 @@ retailer <- function(cells, indent){
   tidyr::drop_na(type)  
 }
 
-retailer_x_region <- function(cells, indent){
+retailer_x_channel <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row >= 1483 & row <= 1707) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>% 
   unpivotr::behead("NNW", kpi) %>% 
@@ -148,7 +205,6 @@ retailer_x_region <- function(cells, indent){
 
 top_ten_manufacturers <- function(cells, indent){
   cells %>% 
-  dplyr::filter(row == 1 | row >= 1709 & row <=1753) %>% 
   unpivotr::behead("N", week_ending) %>% 
   unpivotr::behead("NNW", section) %>%
   unpivotr::behead_if(indent[local_format_id] == 0, direction = "WNW", name = "kpi") %>% 
@@ -157,4 +213,16 @@ top_ten_manufacturers <- function(cells, indent){
   dplyr::mutate(subtype = NA) %>% 
   select(section, attribute, kpi, type, subtype, week_ending, value = numeric) %>% 
   tidyr::drop_na(type)
+}
+
+alcoholabv <- function(cells, indent){
+  cells %>% 
+    unpivotr::behead("N", week_ending) %>% 
+    unpivotr::behead("NNW", section) %>% 
+    unpivotr::behead("NNW", attribute) %>% 
+    unpivotr::behead_if(indent[local_format_id] == 0, direction = "WNW", name = "kpi") %>% 
+    unpivotr::behead("W", type) %>% 
+    dplyr::mutate(subtype = NA) %>% 
+    select(section, attribute, kpi, type, subtype, week_ending, value = numeric) %>% 
+    tidyr::drop_na(type)
 }
