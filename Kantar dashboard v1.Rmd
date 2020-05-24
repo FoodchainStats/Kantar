@@ -1,0 +1,1629 @@
+---
+title: "The Impact of Covid-19 on Grocery Purchasing in Great Britain"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+   orientation: rows
+   vertical_layout: scroll
+---
+  
+   <style type="text/css">
+    .navbar {
+      font-size: 12px;
+      font-family: Arial;
+      background-color: #00B092;
+      border-color: #98a4ae;
+    }
+    
+.navbar .navbar-nav > li > a:hover,
+.navbar .navbar-nav > li > a:focus {
+  color: white;
+  background-color: #3fd4bb;
+}
+.navbar .navbar-nav > .active > a,
+.navbar .navbar-nav > .active > a:hover,
+.navbar .navbar-nav > .active > a:focus {
+  color: white;
+  background-color: #3fd4bb;
+}
+.navbar .navbar-nav > .disabled > a,
+.navbar .navbar-nav > .disabled > a:hover,
+.navbar .navbar-nav > .disabled > a:focus {
+  color: white;
+  background-color: transparent;
+}
+.navbar .navbar-toggle {
+  border-color: #00B092;
+}
+.navbar .navbar-toggle:hover,
+.navbar .navbar-toggle:focus {
+  background-color: #00B092;
+}
+
+.text_pages_intro {  
+   font-family: Arial;
+   line-height: 2;
+}
+
+.text_pages_about {  
+   font-family: Arial;
+   line-height: 1.7;
+}
+</style>
+
+```{r global, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+## CTRL + SHIFT + C to comment/uncomment out code
+
+# disabling scientific notation
+options(scipen = 999)
+
+##### Load packages ------------------------------------------------------
+#if (!require("pacman")) install.packages("pacman")
+#if (!require("phecharts")) devtools::install_git('https://gitlab.phe.gov.uk/packages/phecharts')
+#pacman::p_load(tidyverse, janitor, data.table, phecharts, plotly, flexdashboard, DT, shiny, shinyWidgets, scales)
+library(tidyverse)
+library(shiny)
+library(shinyWidgets)
+library(janitor)
+library(plotly)
+library(flexdashboard)
+library(DT)
+library(scales)
+library(viridis)
+library(lubridate)
+
+# check order of these if conflicts arise...
+
+######### Import most recent dataset ---------------------------------------------------------------
+cleaned_data_initial <- read.csv("Current_Week_cleaned_data.csv", stringsAsFactors = F)
+
+######### splitting out alcohol data (for its own alcohol tab)
+alcohol_data <- filter(cleaned_data_initial, Group == "Alcohol ABV")
+cleaned_data <- filter(cleaned_data_initial, Group != "Alcohol ABV")
+
+###### Creating regularly used function ----------------------------------------------------------
+# Percentage change
+pct_change <- function(old, new){
+  (new / old -1) * 100
+}
+
+```
+
+Weekly Summary {data-navmenu="Menu"}
+=======================================================================
+### <span style="color: red;font-weight:bold">RESTRICTED - not for public sharing</span>
+
+```{r}
+ 
+# all options after lockdown
+current_week_selection <- colnames(cleaned_data)[grepl("2020",colnames(cleaned_data)) & !(grepl("2020.01|2020.02|2020.03.01|2020.03.08|2020.03.15|2020.03.22|2019",colnames(cleaned_data)))]
+
+ inputPanel(
+    selectInput("week_selection_input", label = HTML('<b>Current Week Selection:</b>'), 
+                choices = format(as.Date(gsub("w.e.","",current_week_selection), format = "%Y.%m.%d"), "%d/%m/%y"), 
+                selected = format(as.Date(gsub("w.e.","",current_week_selection[length(current_week_selection)]), format = "%Y.%m.%d"), "%d/%m/%y"))
+  )
+
+ # extracting list of 'parent categories' used for filtering purposes
+ parent_cats <- filter(cleaned_data, Category == Parent_Category)%>%select(Category)%>%distinct()%>%pull(Category)
+ 
+
+# these are reactive
+selected_current_week <- reactive({input$week_selection_input})
+selected_current_week_position <- reactive({match(selected_current_week(), format(as.Date(gsub("w.e.","",current_week_selection), format = "%Y.%m.%d"), "%d/%m/%y"))})
+cols_to_remove <- reactive({
+    if(selected_current_week_position() == length(current_week_selection)){
+    "Not applicable"
+  }else{
+  current_week_selection[(selected_current_week_position() + 1):length(current_week_selection)]
+  }
+    })
+
+selected_cleaned_data <- reactive({
+  df <- cleaned_data[!colnames(cleaned_data) %in% cols_to_remove()]
+  return(df)})
+
+ # getting weeks to show on trend charts
+every_other_month <- reactive({
+ weeks_in_selected_data <- as.Date(gsub("w.e.", "",colnames(selected_cleaned_data())[grepl("2019|2020", colnames(selected_cleaned_data()))]), format = "%Y.%m.%d")
+
+month_start <- weeks_in_selected_data[wday(weeks_in_selected_data,label = TRUE) == "Sun" & day(weeks_in_selected_data) <= 7]
+# getting every 2nd month
+e_o_month <- month_start[c(TRUE, FALSE)]
+return(e_o_month)
+})
+ 
+################################## Creating summary stats --------------------------------------------------------------------
+
+
+group_summary <- reactive({
+  #df_to_pass <- cleaned_data
+  df_to_pass <- selected_cleaned_data()
+wks_2020 <- colnames(df_to_pass)[grepl("2020",colnames(df_to_pass)) & !(grepl("2019",colnames(df_to_pass)))]
+
+#using length of wks in 2020 to date to get the same number of weeks in 2019
+wks_2019 <-colnames(df_to_pass)[grepl("2019",colnames(df_to_pass))][1:length(wks_2020)]
+  
+# initial group summary dataframe
+ group_summary_initial <- data.frame(
+  Category = df_to_pass$Category,
+  Group = df_to_pass$Group,
+  Sub_Group = df_to_pass$Sub_Group,
+  Indicator = df_to_pass$Indicator,
+  Current_Week = df_to_pass[,ncol(df_to_pass)],
+  Previous_Week = df_to_pass[,ncol(df_to_pass)-1],
+  Last_Year_Week = df_to_pass[,ncol(df_to_pass)-52],
+  stringsAsFactors = F
+)%>%
+  # adding raw and % changes
+mutate(pct_diff_last_week = ifelse(Indicator == "Penetration", Current_Week - Previous_Week, pct_change(Previous_Week, Current_Week)),
+       pct_diff_last_year = ifelse(Indicator == "Penetration", Current_Week - Last_Year_Week, pct_change(Last_Year_Week, Current_Week)))
+
+# getting year to date info and summarising -----------------------------------
+ytd_2020 <- df_to_pass[colnames(df_to_pass) %in% wks_2020 | colnames(df_to_pass) %in% c("Category", "Group", "Sub_Group", "Indicator")]
+ytd_2019 <- df_to_pass[colnames(df_to_pass) %in% wks_2019 | colnames(df_to_pass) %in% c("Category", "Group", "Sub_Group", "Indicator")]
+
+# getting average and sum of ytd weeks
+ytd_2020$Avg_ytd_20 = rowMeans(ytd_2020[,c(-1,-2,-3,-4)], na.rm = T)
+#ytd_2020$Sum_ytd_20 = rowSums(ytd_2020[,c(-1,-2,-3,-4)], na.rm = T)
+
+ytd_2019$Avg_ytd_19 = rowMeans(ytd_2019[,c(-1,-2,-3,-4)], na.rm = T)
+#ytd_2019$Sum_ytd_19 = rowSums(ytd_2019[,c(-1,-2,-3,-4)], na.rm = T)
+
+# creating final ytd table - note currently just using average ytd figures...(as just used for % change charts which give same result whether you use sum or average)
+# turn NaN into NAs
+ytd <- ytd_2020 %>%
+  select(Category, Group, Sub_Group, Indicator, Avg_ytd_20)%>%
+ # mutate(ytd_stat_20 = ifelse(Indicator %in% c("Penetration", "Trips Per Household"), Avg_ytd_20, Sum_ytd_20))
+  mutate(ytd_stat_20 = ifelse(is.nan(Avg_ytd_20), NA, Avg_ytd_20))%>%
+  select(-Avg_ytd_20)%>%
+  left_join(ytd_2019 %>%
+  select(Category, Group, Sub_Group, Indicator, Avg_ytd_19)%>%
+   mutate(ytd_stat_19 = ifelse(is.nan(Avg_ytd_19), NA, Avg_ytd_19))%>%
+  select(-Avg_ytd_19), by = c("Category", "Group", "Sub_Group", "Indicator"))%>%
+  mutate(pct_ytd_diff = ifelse(Indicator == "Penetration", ytd_stat_20 - ytd_stat_19, pct_change(ytd_stat_19, ytd_stat_20)))
+
+#combining ytd with summary table
+group_summary_initial <- left_join(group_summary_initial, ytd, by = c("Category", "Group", "Sub_Group", "Indicator"))%>%
+  select("Category", "Group", "Sub_Group", "Indicator", "Current_Week", "Previous_Week", "Last_Year_Week",  "ytd_stat_20", "ytd_stat_19", 
+         "pct_diff_last_week", "pct_diff_last_year", "pct_ytd_diff")
+
+# getting 4 week rolling average info -----------------------
+# using wks_2020 and wks_2019 to get the last 4 weeks
+wks_2020_4_recent <- wks_2020[(length(wks_2020)-3):length(wks_2020)]
+wks_2019_4_recent <- wks_2019[(length(wks_2019)-3):length(wks_2019)]
+
+# getting year to date info and summarising -----------------------------------
+four_week_2020 <- df_to_pass[colnames(df_to_pass) %in% wks_2020_4_recent | colnames(df_to_pass) %in% c("Category", "Group", "Sub_Group", "Indicator")]
+four_week_2019 <- df_to_pass[colnames(df_to_pass) %in% wks_2019_4_recent | colnames(df_to_pass) %in% c("Category", "Group", "Sub_Group", "Indicator")]
+
+# getting average and sum of the 4 weeks
+four_week_2020$Avg_four_week_20 = rowMeans(four_week_2020[,c(-1,-2,-3,-4)], na.rm = T)
+
+four_week_2019$Avg_four_week_19 = rowMeans(four_week_2019[,c(-1,-2,-3,-4)], na.rm = T)
+
+# creating final four_week table - note currently just using average four_week figures
+four_week <- four_week_2020 %>%
+  select(Category, Group, Sub_Group, Indicator, Avg_four_week_20)%>%
+  mutate(four_week_stat_20 = ifelse(is.nan(Avg_four_week_20), NA, Avg_four_week_20))%>%
+  select(-Avg_four_week_20)%>%
+  left_join(four_week_2019 %>%
+  select(Category, Group, Sub_Group, Indicator, Avg_four_week_19)%>%
+   mutate(four_week_stat_19 = ifelse(is.nan(Avg_four_week_19), NA, Avg_four_week_19))%>%
+  select(-Avg_four_week_19), by = c("Category", "Group", "Sub_Group", "Indicator"))%>%
+  mutate(pct_four_week_diff = ifelse(Indicator == "Penetration", four_week_stat_20 - four_week_stat_19, pct_change(four_week_stat_19, four_week_stat_20)))
+
+#combining four_week with summary table
+# NOTE I'VE REMOVED THE RAW DIFFERENCES SO THE TABLE DOESN'T HAVE TOO MANY COLUMNS
+group_summary_final <- left_join(group_summary_initial, four_week, by = c("Category", "Group", "Sub_Group", "Indicator"))%>%
+  select("Category", "Group", "Sub_Group", "Indicator", "Current_Week", "Previous_Week", "Last_Year_Week", "four_week_stat_20", "four_week_stat_19", "ytd_stat_20", "ytd_stat_19", "pct_diff_last_week", "pct_diff_last_year", "pct_four_week_diff", "pct_ytd_diff")
+
+return(group_summary_final)
+})
+
+# Extracting weeks needed for summary table analysis
+current_week <- reactive({
+  gsub("w.e.","",colnames(selected_cleaned_data())[ncol(selected_cleaned_data())])
+})
+previous_week <- reactive({
+  gsub("w.e.","",colnames(selected_cleaned_data())[ncol(selected_cleaned_data())-1])
+})
+last_year_week <- reactive({
+  gsub("w.e.","",colnames(selected_cleaned_data())[ncol(selected_cleaned_data())-52])
+})
+week_number <- 
+  reactive({as.character(length(colnames(selected_cleaned_data())[grepl("2020",colnames(selected_cleaned_data())) & !(grepl("2019",colnames(selected_cleaned_data())))]))
+})
+
+```
+
+### `r renderText({paste0("The weekly findings for week ending ", format(as.Date(input$week_selection_input, format = "%d/%m/%y"), "%d %B %Y"), " are:")})`
+
+Row {.text_pages_intro data-height=170}
+-----------------------------------------------------------------------
+
+### Overview metrics
+
+```{r}
+fillCol(flex = c(NA, NA, NA, NA), textOutput("intro_point1") , 
+        textOutput("intro_point2b"), textOutput("intro_point2"), textOutput("intro_point3"))
+
+# code to use if you want an html output in your column (put this in fillCol)
+# htmlOutput("blank1")
+
+# Intro to main points
+#output$intro_text <- renderText({
+# paste0("The weekly findings for week ending ", format(as.Date(current_week, format = "%Y.%m.%d"), "%d %B %Y"), " are: ")
+#})
+
+#output$blank1 <- renderText({
+ # HTML(paste0("<br/>"))
+#})
+
+# Point 1 - volume sales
+vol_pct_diff_last_year <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Volume")%>%pull(pct_diff_last_year)
+})
+total_vol_sales_current <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Volume")%>%pull(Current_Week)
+})
+vol_pct_diff_last_week <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Volume")%>%pull(pct_diff_last_week)
+})
+
+
+output$intro_point1 <- renderText({
+ paste0("* Total volume sales were ", format(round_half_up(total_vol_sales_current(),0), big.mark = ","), " tonnes, which was ",
+        format(round_half_up(abs(vol_pct_diff_last_year()),1), nsmall = 1),"% ",
+       ifelse(vol_pct_diff_last_year() < 0, "lower", "higher"), " than the equivalent week in 2019 and ",
+        format(round_half_up(abs(vol_pct_diff_last_week()),1), nsmall = 1), "% ", ifelse(vol_pct_diff_last_week() < 0, "lower", "higher"),
+        " than the previous week in 2020.")
+})
+
+# Point 2 - year to date volume sales
+vol_pct_diff_ytd <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Volume")%>%pull(pct_ytd_diff)
+})
+
+output$intro_point2 <- renderText({
+paste0("* Average total volume sales during 2020 (", as.numeric(week_number()), " week period) were ", format(round_half_up(abs(vol_pct_diff_ytd()),1), nsmall = 1), "% ",
+       ifelse(vol_pct_diff_ytd() < 0, "lower", "higher"), " than the same period in 2019.")
+
+})
+
+
+# Point 2b - 4 week rolling average volume sales
+vol_pct_diff_four_week <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Volume")%>%pull(pct_four_week_diff)
+})
+  
+output$intro_point2b <- renderText({
+paste0("* Average total volume sales of the latest 4 weeks were ", format(round_half_up(abs(vol_pct_diff_four_week()),1), nsmall = 1), "% ",
+       ifelse(vol_pct_diff_four_week() < 0, "lower", "higher"), " than the same period in 2019.")
+
+})
+
+# Point 3 - trips per household
+trips_pct_diff_last_year <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Trips Per Household")%>%pull(pct_diff_last_year)
+})
+trips_current_week <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Trips Per Household")%>%pull(Current_Week)
+})
+trips_last_year <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Trips Per Household")%>%pull(Last_Year_Week)
+})
+trips_last_week <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator == "Trips Per Household")%>%pull(Previous_Week)
+})
+
+output$intro_point3 <- renderText({
+paste0("* Households made ", ifelse(trips_pct_diff_last_year() == 0, "the same number of", ifelse(trips_pct_diff_last_year() < 0, "fewer", "more")),
+       " trips (", format(round_half_up(trips_current_week(),1), nsmall = 1), " trips per household) than they were making during the equivalent week in 2019 (", 
+       format(round_half_up(trips_last_year(),1), nsmall = 1), 
+       " trips per household), and there was",
+       ifelse(round_half_up(trips_current_week(),1) - round_half_up(trips_last_week(),1) < 0, " a decrease of ", " an increase of "), format(abs(round_half_up(trips_current_week(),1) - round_half_up(trips_last_week(),1)), nsmall = 1), " trips per household from the previous week.")  
+})
+
+```
+
+Row {.text_pages_intro data-height=230}
+-----------------------------------------------------------------------
+### Categories
+
+```{r}
+fillCol(flex = c(NA, NA, NA, NA), textOutput("intro_point10"), textOutput("intro_point11"), textOutput("intro_point8"), textOutput("intro_point9"))
+
+output$intro_point8 <- renderText({
+  # Point 8 top 3 categories largest % increase previous week
+category_increase_last_week <- filter(group_summary(), Category != "Total Food & Drink" & Category %in% parent_cats & Group == "Overall" & Indicator == "Volume" & pct_diff_last_week > 0)%>%
+  top_n(3, round_half_up(pct_diff_last_week,1))%>%select(Category, pct_diff_last_week)%>%
+  mutate(text = paste0(Category, " (+", format(round_half_up(pct_diff_last_week,1), nsmall = 1), "%)"))%>%
+  arrange(desc(pct_diff_last_week))
+
+    if(nrow(category_increase_last_week) == 0){
+    intro_point8_print <- paste0("* No categories had an increase in volume sales from the previous week.")
+    }else{
+  intro_point8_print <- paste0("* The categories that had the largest percentage increase in volume sales from the previous week were: ",
+         paste0(category_increase_last_week$text[1:nrow(category_increase_last_week) - 1], collapse = ", "), " and ", 
+         category_increase_last_week$text[nrow(category_increase_last_week)], ".")
+    }
+  print(intro_point8_print)
+})
+
+output$intro_point9 <- renderText({
+  # Point 9 top 3 categories largest % decrease previous week
+category_decrease_last_week <- filter(group_summary(), Category != "Total Food & Drink" & Category %in% parent_cats  & Group == "Overall" & Indicator == "Volume" & pct_diff_last_week < 0)%>%
+  top_n(-3, round_half_up(pct_diff_last_week,1))%>%select(Category, pct_diff_last_week)%>%
+  mutate(text = paste0(Category, " (", format(round_half_up(pct_diff_last_week,1), nsmall = 1), "%)"))%>%
+  arrange(pct_diff_last_week)
+
+    if(nrow(category_decrease_last_week) == 0){
+    intro_point9_print <- paste0("* No categories had a decrease in volume sales from the previous week.")
+    }else{
+  intro_point9_print <- paste0("* The categories that had that largest percentage decrease in volume sales from the previous week were: ",
+              paste0(category_decrease_last_week$text[1:nrow(category_decrease_last_week) - 1], collapse = ", "), " and ", 
+         category_decrease_last_week$text[nrow(category_decrease_last_week)], ".")
+    }
+  print(intro_point9_print)
+})
+
+
+output$intro_point10 <- renderText({
+  # Point 10 top 3 categories largest % increase previous year
+category_increase_last_year <- filter(group_summary(), Category != "Total Food & Drink" & Category %in% parent_cats & Group == "Overall" & Indicator == "Volume" & pct_diff_last_year > 0)%>%
+   top_n(3, round_half_up(pct_diff_last_year,1))%>%select(Category, pct_diff_last_year)%>%
+  mutate(text = paste0(Category, " (+", format(round_half_up(pct_diff_last_year,1), nsmall = 1), "%)"))%>%
+  arrange(desc(pct_diff_last_year))
+
+    if(nrow(category_increase_last_year) == 0){
+    intro_point10_print <- paste0("* No categories had an increase in volume sales from the equivalent week in 2019.")
+    }else{
+  intro_point10_print <- paste0("* The categories that had that largest percentage increase in volume sales from the equivalent week in 2019 were: ",
+            paste0(category_increase_last_year$text[1:nrow(category_increase_last_year) - 1], collapse = ", "), " and ", 
+         category_increase_last_year$text[nrow(category_increase_last_year)], ".")
+    }
+  print(intro_point10_print)
+})
+
+
+output$intro_point11 <- renderText({
+  # Point 11 top 3 categories largest % decrease previous year
+category_decrease_last_year <- filter(group_summary(), Category != "Total Food & Drink" & Category %in% parent_cats & Group == "Overall" & Indicator == "Volume" & pct_diff_last_year < 0)%>%
+     top_n(-3, round_half_up(pct_diff_last_year,1))%>%select(Category, pct_diff_last_year)%>%
+  mutate(text = paste0(Category, " (", format(round_half_up(pct_diff_last_year,1), nsmall = 1), "%)"))%>%
+  arrange(pct_diff_last_year)
+
+    if(nrow(category_decrease_last_year) == 0){
+    intro_point11_print <- paste0("* No categories had a decrease in volume sales from the equivalent week in 2019.")
+    }else{
+  intro_point11_print <-  paste0("* The categories that had that largest percentage decrease in volume sales from the equivalent week in 2019 were: ",
+              paste0(category_decrease_last_year$text[1:nrow(category_decrease_last_year) - 1], collapse = ", "), " and ", 
+         category_decrease_last_year$text[nrow(category_decrease_last_year)], ".")
+    }
+  print(intro_point11_print)
+})
+
+```
+
+
+Row {.text_pages_intro data-height=140}
+-----------------------------------------------------------------------
+### Nutrients
+
+```{r}
+fillCol(flex = c(NA, NA), textOutput("intro_point5"), textOutput("intro_point4"))
+
+output$intro_point4 <- renderText({
+  # Point 4 - nutrient change from previous week
+nutrient_change_week <- filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & !grepl("Volume|Trips|Penetration", Indicator, ignore.case = T))%>% select(Indicator, pct_diff_last_week)%>%
+  mutate(text = paste0(Indicator, " (", ifelse(round_half_up(pct_diff_last_week,1) > 0, "+", ""), format(round_half_up(pct_diff_last_week,1), nsmall = 1), "%)"))%>%
+  arrange(desc(pct_diff_last_week))
+
+intro_point4_print <- paste0("* Compared to last week, changes in terms of nutrients were: ", paste0(nutrient_change_week$text[1:nrow(nutrient_change_week) - 1], collapse = ", "), " and ", 
+         nutrient_change_week$text[nrow(nutrient_change_week)], ".")
+  print(intro_point4_print)
+  })
+
+
+output$intro_point5 <- renderText({
+  # Point 5 - nutrient change from previous year
+nutrient_change_year <- filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & !grepl("Volume|Trips|Penetration", Indicator, ignore.case = T))%>% select(Indicator, pct_diff_last_year)%>%
+  mutate(text = paste0(Indicator, " (", ifelse(round_half_up(pct_diff_last_year,1) > 0, "+", ""), format(round_half_up(pct_diff_last_year,1), nsmall = 1), "%)"))%>%
+  arrange(desc(pct_diff_last_year))
+
+intro_point5_print <- paste0("* Compared to the same week in the previous year, changes in terms of nutrients were: ", paste0(nutrient_change_year$text[1:nrow(nutrient_change_year) - 1], collapse = ", "), " and ", 
+         nutrient_change_year$text[nrow(nutrient_change_year)], ".")
+  print(intro_point5_print)
+  })
+
+```
+
+Row
+-----------------------------------------------------------------------
+### Demographic Groups (equivalent week in 2019)
+```{r}
+fillCol(flex = c(NA, NA), plotlyOutput("intro_p1", height = "100%"), textOutput("intro_footnote"))
+
+intro_demo_data <- reactive({
+ df <- filter(group_summary(), Category == "Total Food & Drink" & Group %in% c("Overall", "Lifestage", "Region", "Rural / Urban Split", "Social Class", "Vulnerable Groups") & Sub_Group != "Total" & Indicator %in% c("Volume", "Trips Per Household"))
+
+    # lock in order of sub groups
+df$Sub_Group <- factor(df$Sub_Group, levels = rev(unique(df$Sub_Group)))
+
+# lock in order of indicators
+df$Indicator <- factor(df$Indicator, levels = c("Trips Per Household", "Volume"))
+
+return(df)
+})
+
+
+output$intro_p1 <- renderPlotly({
+
+  # create static ggplot
+  p1 <- ggplot(intro_demo_data(), aes(x = Sub_Group, y = round_half_up(pct_diff_last_year,1), fill = Group,
+               text = paste0("<b>", ifelse(round_half_up(pct_diff_last_year,1) >= 0, "+", ""), format(round_half_up(pct_diff_last_year,1), nsmall = 1), "% </b> <br>", Sub_Group))) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+    scale_y_continuous(breaks= pretty_breaks(), expand = expansion(mult = c(.05, .05))) +
+  coord_flip() +
+    labs(x = NULL, y = "Percentage change (%)", title = "Percentage change from the equivalent week in 2019") +
+    geom_hline(yintercept = 0, color = "black",  size = 0.35, show.legend = F) +
+    theme(panel.grid.major = element_blank(), legend.position = "top", legend.title=element_blank()) +
+  scale_fill_viridis()+
+     facet_wrap(~fct_rev(Indicator), scales="free") #+ 
+  #guides(fill = guide_legend(reverse = TRUE))
+
+    # then create plotly graph
+   ggplotly(p1, tooltip = "text") #%>%
+    #config(displayModeBar = F)
+   
+})
+
+output$intro_footnote <- renderText({
+  paste0("Note: Purchases which are passed onto another household, e.g. adult child buying for elderly parent(s), are likely to be included according to who made the initial purchase, e.g. adult child.")
+})
+
+```
+
+Row
+-----------------------------------------------------------------------
+### Demographic Groups (previous week)
+
+```{r}
+fillCol(flex = c(NA, NA), plotlyOutput("intro_p2", height = "100%"), textOutput("intro_footnote2"))
+
+output$intro_p2 <- renderPlotly({
+ # create static ggplot
+  p2 <- ggplot(intro_demo_data(), aes(x = Sub_Group, y = round_half_up(pct_diff_last_week,1), fill = Group,
+               text = paste0("<b>", ifelse(round_half_up(pct_diff_last_week,1) >= 0, "+", ""), format(round_half_up(pct_diff_last_week,1), nsmall = 1), "% </b> <br>", Sub_Group))) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+    scale_y_continuous(breaks= pretty_breaks(), expand = expansion(mult = c(.05, .05))) +
+  coord_flip() +
+    labs(x = NULL, y = "Percentage change (%)", title = "Percentage change from the previous week") +
+    geom_hline(yintercept = 0, color = "black",  size = 0.35, show.legend = F) +
+    theme(panel.grid.major = element_blank(), legend.position = "top", legend.title=element_blank()) +
+  scale_fill_viridis()+
+     facet_wrap(~fct_rev(Indicator), scales="free")
+
+    # then create plotly graph
+   ggplotly(p2, tooltip = "text") #%>%
+    #config(displayModeBar = F)
+})
+
+output$intro_footnote2 <- renderText({
+  paste0("Note: Purchases which are passed onto another household, e.g. adult child buying for elderly parent(s), are likely to be included according to who made the initial purchase, e.g. adult child.")
+})
+
+```
+
+
+Overview  {data-navmenu="Menu"}
+=======================================================================
+### <span style="color: red;font-weight:bold">RESTRICTED - not for public sharing</span>
+
+### **Overview**
+Row
+-----------------------------------------------------------------------
+
+### Current Week
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("overview_cw"))
+
+output$overview_cw <- flexdashboard::renderValueBox({
+  flexdashboard::valueBox(format(as.Date(current_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")
+  })
+```
+
+### Week Number
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("overview_wn"))
+
+output$overview_wn <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(week_number(), color = "#98a4ae")})
+```
+
+### Previous Week
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("overview_pw"))
+
+output$overview_pw <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(format(as.Date(previous_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")})
+```
+
+### Equivalent Week in 2019
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("overview_lyw"))
+
+output$overview_lyw <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(format(as.Date(last_year_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")})
+```
+
+
+
+Row
+-------------------------------------
+
+### Trend over time
+```{r overall trend over time}
+
+
+# extracting overall data
+overall_data <- reactive({
+  filter(selected_cleaned_data(), Category == "Total Food & Drink" & Group == "Overall")
+})
+
+# picking indicator to present (based on entire cleaned dataset indicator list)
+  fillCol(flex = c(NA, 1),
+  inputPanel(
+    selectInput("indicator_input", label = HTML('<b>Indicator:</b>'), choices = as.character(unique(cleaned_data$Indicator)))
+  ),
+  plotlyOutput("overall_trend", height = "100%")
+)
+  
+
+# Creating Line graph of trend over time
+output$overall_trend <- renderPlotly({
+
+    if (input$indicator_input == "Volume") {
+indicator <- "Volume"
+unit <- "tonnes, kilolitres and thousand servings"
+  }else if(input$indicator_input == "Penetration"){
+indicator <- "Penetration"
+unit <- "%"
+  }else if(input$indicator_input == "Trips Per Household"){
+indicator <- "Trips Per Household"
+unit <- "trips"
+  }else if(input$indicator_input == "Volume Per Trip"){
+indicator <- "Volume Per Trip"
+unit <- "kg, litres and servings"
+  }else if(input$indicator_input == "Sugar"){
+indicator <- "Sugar"
+unit <- "tonnes, kilolitres and thousand servings"
+  }else if(input$indicator_input == "Calories"){
+indicator <- "Calories"
+unit <- "million kcals"
+  }else if(input$indicator_input == "Total Fat"){
+indicator <- "Total Fat"
+unit <- "tonnes, kilolitres and thousand servings"
+  }else if(input$indicator_input == "Saturated Fat"){
+indicator <- "Saturated Fat"
+unit <- "tonnes, kilolitres and thousand servings"
+  }else if(input$indicator_input == "Fibre"){
+indicator <- "Fibre"
+unit <- "tonnes, kilolitres and thousand servings"
+  }else if(input$indicator_input == "Protein"){
+indicator <- "Protein"
+unit <- "Tonnes"
+  }else if(input$indicator_input == "Carbohydrates"){
+indicator <- "Carbohydrates"
+unit <- "tonnes, kilolitres and thousand servings"
+  }else{
+indicator <- "Sodium"
+unit <- "tonnes, kilolitres and thousand servings"
+}
+
+  # extract relevant data
+  indicator_data <- filter(overall_data(), Indicator == indicator)%>%
+    pivot_longer(cols = starts_with("w.e"),
+                 names_to = "Week",
+                 values_to = "Value")%>%
+    # turning week names into dates
+    mutate(Week = as.Date(gsub("w.e.","", Week), format = "%Y.%m.%d"))
+
+  # first create static ggplot graph
+  p <- ggplot(indicator_data, aes(x = Week, y = Value, group = 1,
+                                  text = paste0("<b>", ifelse(Value < 0.5, format(round_half_up(Value, 3), nsmall = 3),
+                                                        ifelse(Value < 100, format(round_half_up(Value, 1), nsmall = 1), format(round_half_up(Value,0),big.mark = ","))) , "</b> ",unit,"<br>", format(Week, "%d %B %Y")))) +
+    geom_line(colour = "#00ab96", size = 1) +
+    scale_x_date(breaks = every_other_month(), 
+    #scale_x_date(breaks = seq(min(indicator_data$Week), max(indicator_data$Week), by = "8 weeks"),
+                 expand = c(0.005, 0.4), date_labels = "%d-%b-%y") +
+    scale_y_continuous(breaks= pretty_breaks(), limits = c(0, range(pretty_breaks()(indicator_data$Value))[2]),
+                       expand = expansion(mult = c(0, .1)), labels = comma) +
+    labs(x = "Week", y = paste0(indicator, " (", unit, ")")) +
+    # adding extra info to chart
+    geom_vline(aes(xintercept = as.numeric(as.Date("2020-03-23")), color = "Lockdown announced"), linetype = 2, size = 1, show.legend = T) +
+    scale_color_manual(name = "", values = c("Lockdown announced" = "#98a4ae"), labels = c("Lockdown announced"))+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# then create plotly graph
+   ggplotly(p, tooltip = "text") %>%
+    #config(displayModeBar = F) %>%
+    layout(xaxis = list(fixedrange = F)) %>%
+    layout(yaxis = list(fixedrange = F)) %>%
+     layout(legend = list(orientation = "h",
+                   y = 1.05, x = 0.25))
+
+})
+
+```
+
+
+### Percentage change
+```{r overall percentage change bar chart}
+
+# radio buttons to choose comparison to last week or last year
+# flex amends proportions of elements in fillcol ie. radio buttons given much smaller area than chart
+fillCol(flex = c(2, 1, 8),
+        radioButtons("pct_comparator", label = HTML('<b>Comparator</b>'), choices = c( "Current vs. Equivalent Week in 2019", "Current vs. Previous Week",  "Weekly average of latest 4 weeks 2020 vs. 2019", "Weekly average year to date 2020 vs. 2019"), selected = "Current vs. Equivalent Week in 2019", inline = T),
+        radioButtons("indicator_group", label = HTML('<b>Indicator Group</b>'), choices = c("Purchasing Habits", "Nutrient Sales"), selected = "Purchasing Habits", inline = T),
+        plotlyOutput("pct_change_overall", height = "100%")
+        )
+
+output$pct_change_overall <- renderPlotly({
+
+# Bar chart of percentage change
+# Weekly average of latest 4 weeks 2020 vs. 2019
+  # getting radio button choice
+    if (input$pct_comparator == "Current vs. Previous Week") {
+pct_week_or_year <- "pct_diff_last_week"
+  }else if (input$pct_comparator == "Current vs. Equivalent Week in 2019"){
+  pct_week_or_year <- "pct_diff_last_year"
+  }else if (input$pct_comparator == "Weekly average year to date 2020 vs. 2019"){
+   pct_week_or_year <- "pct_ytd_diff"
+  } else{
+    pct_week_or_year <- "pct_four_week_diff"
+  }
+
+  if (input$indicator_group == "Purchasing Habits") {
+indicators_for_pct_chart <- c("Volume Per Trip", "Trips Per Household", "Penetration", "Volume")
+  }else{
+  indicators_for_pct_chart <- c("Sugar", "Calories", "Sodium", "Saturated Fat", "Total Fat", "Fibre", "Protein", "Carbohydrates")
+}
+
+  # extract relevant data - ordering depends on indicator group selected
+  if (input$indicator_group == "Purchasing Habits") {
+overall_summary_subset <- filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator %in% indicators_for_pct_chart)%>%
+  select(Indicator, !!pct_week_or_year)%>%
+  rename(pct_diff = !!pct_week_or_year)
+
+    # lock in order of indicators (based on indicator name)
+overall_summary_subset$Indicator <- factor(overall_summary_subset$Indicator, levels = indicators_for_pct_chart)
+
+  }else{
+  overall_summary_subset <- filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall" & Indicator %in% indicators_for_pct_chart)%>%
+  select(Indicator, !!pct_week_or_year)%>%
+  rename(pct_diff = !!pct_week_or_year)%>%
+    arrange(pct_diff)
+
+    # lock in order of indicators (based on % diff values)
+overall_summary_subset$Indicator <- factor(overall_summary_subset$Indicator, levels = unique(overall_summary_subset$Indicator))
+}
+
+
+  # create static ggplot
+  p <- ggplot(overall_summary_subset, aes(x = Indicator, y = round_half_up(pct_diff,1), group = 1,
+               text = paste0("<b>", ifelse(round_half_up(pct_diff,1) >= 0, "+", ""), format(round_half_up(pct_diff,1), nsmall = 1), "% </b> <br>", Indicator))) +
+  geom_bar(stat = "identity", fill = "#862633") +
+    scale_y_continuous(breaks= pretty_breaks(), expand = expansion(mult = c(.05, .05))) +
+  coord_flip() +
+    labs(x = NULL, y = "Percentage change (%)") +
+    geom_hline(yintercept = 0, color = "black",  size = 0.35, show.legend = F) +
+    theme(panel.grid.major = element_blank())
+
+  # then create plotly graph
+   ggplotly(p, tooltip = "text") %>%
+    #config(displayModeBar = F) %>%
+    layout(xaxis = list(fixedrange = T)) %>%
+    layout(yaxis = list(fixedrange = T))
+})
+
+```
+
+
+Row
+-------------------------------------
+
+### Summary table
+```{r overall summary table}
+
+# extracting columns needed / renaming / reformating
+overall_summary <- reactive({
+  filter(group_summary(), Category == "Total Food & Drink" & Group == "Overall")%>%
+  mutate(
+    !! paste0("Current Week (",format(as.Date(current_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Penetration", "Trips Per Household", "Volume Per Trip"), format(round_half_up(Current_Week,1), nsmall = 1),
+                  format(round_half_up(Current_Week,0), big.mark = ",")),
+         !! paste0("Previous Week (",format(as.Date(previous_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Penetration", "Trips Per Household", "Volume Per Trip"), format(round_half_up(Previous_Week,1), nsmall = 1),
+                  format(round_half_up(Previous_Week,0), big.mark = ",")),
+         !! paste0("Current Week in 2019 (",format(as.Date(last_year_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Penetration", "Trips Per Household", "Volume Per Trip"), format(round_half_up(Last_Year_Week,1), nsmall = 1),
+                  format(round_half_up(Last_Year_Week,0), big.mark = ",")),
+         !! paste0("Latest 4 week average in 2020 (weeks ", as.numeric(week_number())-3, " to ", week_number(), ")") :=
+           ifelse(Indicator %in% c("Penetration", "Trips Per Household", "Volume Per Trip"), format(round_half_up(four_week_stat_20,1), nsmall = 1),
+                  format(round_half_up(four_week_stat_20,0), big.mark = ",")),
+         !! paste0("Latest 4 week average in 2019 (weeks ", as.numeric(week_number())-3, " to ", week_number(), ")") :=
+           ifelse(Indicator %in% c("Penetration", "Trips Per Household", "Volume Per Trip"), format(round_half_up(four_week_stat_19,1), nsmall = 1),
+                  format(round_half_up(four_week_stat_19,0), big.mark = ",")),
+         !! paste0("Year to date average in 2020 (", as.numeric(week_number()), " weeks)") := 
+           ifelse(Indicator %in% c("Penetration", "Trips Per Household", "Volume Per Trip"), format(round_half_up(ytd_stat_20,1), nsmall = 1),
+                  format(round_half_up(ytd_stat_20,0), big.mark = ",")),
+         !! paste0("Year to date average in 2019 (", as.numeric(week_number()), " weeks)") := 
+           ifelse(Indicator %in% c("Penetration", "Trips Per Household", "Volume Per Trip"), format(round_half_up(ytd_stat_19,1), nsmall = 1),
+                  format(round_half_up(ytd_stat_19,0), big.mark = ",")),
+         "Percentage change from previous week (%)" = format(round_half_up(pct_diff_last_week,1), nsmall = 1),
+         "Percentage change from current week in 2019 (%)" = format(round_half_up(pct_diff_last_year,1), nsmall = 1),
+         "Latest 4 week percentage change from 2019 (%)" = format(round_half_up(pct_four_week_diff,1), nsmall = 1),
+         "Year to date percentage change from 2019 (%)" = format(round_half_up(pct_ytd_diff,1), nsmall = 1),
+    Indicator = ifelse(Indicator == "Penetration", paste0(Indicator, " (%)"), ifelse(Indicator == "Calories", paste0(Indicator, " (million kcals)"),
+                       ifelse(Indicator == "Volume Per Trip", paste0(Indicator, " (kg, litres and servings)"),  
+                      ifelse(grepl("Fat|Fibre|Sodium|Sugar|Saturate|Protein|Carb", Indicator) | Indicator == "Volume", paste0(Indicator, " (tonnes, kilolitres and thousand servings)"), Indicator)))))%>%
+  select(-c(Category, Group, Sub_Group, Current_Week, Previous_Week, Last_Year_Week, ytd_stat_20, ytd_stat_19, four_week_stat_20,
+            four_week_stat_19, pct_diff_last_week, pct_diff_last_year, pct_ytd_diff, pct_four_week_diff))
+})
+
+#Creating datatable
+DT::renderDataTable({
+  datatable(overall_summary(), rownames = FALSE,
+          extensions = 'Buttons',
+    options = list(dom = 'Bt',
+    buttons = c('colvis', 'copy'),
+  pageLength = nrow(overall_summary()),
+    columnDefs = list(list(className = 'dt-right', targets = 1:(length(overall_summary())-1))),
+  initComplete = JS(
+    "function(settings, json) {",
+    "$('body').css({'font': '13px Arial'});",
+    "}"
+  )))%>%
+  formatStyle(columns = colnames(overall_summary()), fontSize = '12px')%>%
+  formatStyle('Indicator', fontWeight = 'bold')
+})
+
+```
+
+
+Demographic Breakdown  {data-navmenu="Menu"}
+=======================================================================
+### <span style="color: red;font-weight:bold">RESTRICTED - not for public sharing</span>
+
+### **Demographic Breakdown**
+
+Row
+-----------------------------------------------------------------------
+
+### Current Week
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("demog_cw"))
+
+output$demog_cw <- flexdashboard::renderValueBox({
+  flexdashboard::valueBox(format(as.Date(current_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")
+  })
+```
+
+### Week Number
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("demog_wn"))
+
+output$demog_wn <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(week_number(), color = "#98a4ae")})
+```
+
+### Previous Week
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("demog_pw"))
+
+output$demog_pw <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(format(as.Date(previous_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")})
+```
+
+### Equivalent Week in 2019
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("demog_lyw"))
+
+output$demog_lyw <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(format(as.Date(last_year_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")})
+```
+
+
+
+Column {.sidebar}
+--------------------------------------------------
+
+<br>
+```{r}
+
+# allows user to select demographic of interest (not including social class by region)
+selectInput(
+  "demog", label = HTML('<b>Demographic Group:</b>'),
+ # choices = c("Lifestage", "Region", "Social Class", "Vulnerable Groups"), selected = "Lifestage"
+ choices = as.character(unique(cleaned_data$Group[cleaned_data$Group != "Social Class by Region"])), selected = "Social Class"
+)
+
+
+# getting list of categories by wider category grouping
+unique_cats <- select(cleaned_data, Parent_Category, Category)%>%filter(Category != "Total Food & Drink")%>%distinct()
+# turning into factors to preserve order
+unique_cats$Parent_Category <- factor(unique_cats$Parent_Category, levels=unique(unique_cats$Parent_Category))
+Total <- select(cleaned_data, Category)%>%filter(Category == "Total Food & Drink")%>%distinct()%>%rename(`Total Food & Drink` = Category)
+cat_pick_list <- append(Total, split(unique_cats$Category,unique_cats$Parent_Category))
+
+cat_pick_list_2 <- mapply(append, cat_pick_list, c(""), SIMPLIFY = FALSE)
+
+# allows user to select category of interest
+selectInput(
+  "category", label = HTML('<b>Category:</b>'),
+  #choices = as.character(unique(cleaned_data$Category)), 
+  choices = cat_pick_list_2, selected = "Total Food & Drink"
+)
+
+# allows user to select indicator of interest
+selectInput(
+  "indicator_demog", label = HTML('<b>Indicator:</b>'),
+  choices = as.character(unique(cleaned_data$Indicator)), selected = "Volume"
+)
+
+# in create reactiveVal
+current_selection <- reactiveVal(NULL)
+
+# now store your current selection in the reactive value
+observeEvent(input$indicator_demog, {
+             current_selection(input$indicator_demog)
+             })
+
+# update indicator selection options if total isn't selected
+observeEvent(input$category, {
+   y <- input$category
+   if (is.null(y)) y <- "Total Food & Drink"
+   revised_inds <- if(y == "Total Food & Drink") as.character(unique(cleaned_data$Indicator)) else c("Volume", "Penetration", "Trips Per Household", "Volume Per Trip")
+      
+   updateSelectInput(session, "indicator_demog", choices = revised_inds, 
+                     selected = current_selection()) #, selected = "Volume")
+})
+
+# getting pct change comparator selection
+radioButtons(
+  "pct_comparator_demog", label = HTML('<b>Percentage change comparator</b>'),
+  choices = c("Current vs. Equivalent Week in 2019", "Current vs. Previous Week", "Weekly average of latest 4 weeks 2020 vs. 2019", "Weekly average year to date 2020 vs. 2019")
+)
+
+ # extracting input values
+demog <- reactive({input$demog})
+indicator_demog <- reactive({input$indicator_demog})
+category <- reactive({input$category})
+
+
+```
+
+
+
+Row {.tabset}
+----------------------------------------------------
+
+
+### Trend over time
+```{r}
+
+# this defines final output for the row
+#fillCol(flex = 1, plotlyOutput("demog_trend", height = "100%"))
+
+   # extract relevant data
+selected_demog_data <- reactive({
+#    validate(
+ #       need(!input$indicator_demog %in% c("Volume", "Penetration", "Trips Per Household", "Volume Per Trip") && input$category != "Total Food & Drink", #"Please select a valid indicator")
+      # need(input$indicator_demog , "Please select a valid indicator")
+ #     )
+df <-  filter(selected_cleaned_data(), Category == category() & Indicator == indicator_demog() & Group == demog())%>%
+ # filter(selected_cleaned_data(), Category == "Total Food & Drink" & Indicator == "Volume" & Group == "Social Class")%>%
+   pivot_longer(cols = starts_with("w.e"),
+                 names_to = "Week",
+                 values_to = "Value")%>%
+    # turning week names into dates
+    mutate(Week = as.Date(gsub("w.e.","", Week), format = "%Y.%m.%d"))%>%
+  # removing the 'total' column as skews axis
+  filter(Sub_Group != "Total")%>%
+   # editing order col by giving the total a v high number to force to first position
+   #mutate(group_order_col = ifelse(Sub_Group == "Total", -100000000, group_order_col))%>%
+ arrange(group_order_col)
+
+    # lock in order of sub groups
+df$Sub_Group <- factor(df$Sub_Group, levels = unique(df$Sub_Group))
+
+return(df)
+})
+
+
+# extracting indicator unit
+unit_demog <- reactive({
+x <-if(indicator_demog() == "Penetration"){
+"%"
+  }else if(indicator_demog() == "Trips Per Household"){
+"trips"
+  }else if(indicator_demog() == "Volume Per Trip"){
+"kg, litres and servings"
+  }else if(indicator_demog() == "Calories"){
+    "million kcals"
+  }else{
+    "tonnes, kilolitres and thousand servings"
+  }
+return(x)
+})
+
+# Creating Line graph of trend over time
+#output$demog_trend <- 
+  renderPlotly({
+
+        validate(
+       need(nrow(selected_demog_data()) > 0 , "Please select a valid indicator")
+      )
+    
+# getting colours/names needed for plot
+  cols <- selected_demog_data()%>%
+      pull(group_colour)
+names(cols) <-  selected_demog_data()%>%
+    pull(Sub_Group)
+
+  p <- ggplot(selected_demog_data(), aes(x = Week, y = Value, group = Sub_Group, colour = Sub_Group, 
+                                  text = paste0("<b>", Sub_Group,"<br>", ifelse(Value < 0.5, format(round_half_up(Value,3), nsmall = 3), 
+                                                ifelse(Value < 1, format(round_half_up(Value,2), nsmall = 2), 
+                                                                                ifelse(Value < 100, format(round_half_up(Value,1), nsmall = 1), 
+                                                                               format(round_half_up(Value,0),big.mark = ",")))) , "</b> ",unit_demog(),"<br>",
+                                                format(Week, "%d %B %Y")))) +
+    geom_line(size = 1) +
+    scale_x_date(breaks= every_other_month(), expand = c(0.005, 0.4), date_labels = "%d-%b-%y") +
+    scale_y_continuous(breaks= pretty_breaks(), limits = c(0, range(pretty_breaks()(selected_demog_data()%>%pull(Value)))[2]),
+                       expand = expansion(mult = c(0, .1)), labels = comma) +
+    labs(x = "Week", y = paste0(indicator_demog(), " (", unit_demog(), ")"),
+         title = paste0(indicator_demog(), " - ", demog(), " - ", ifelse(category() == "Total Food & Drink", "All food & drink categories", category()))) +
+    # adding extra info to chart
+    geom_vline(aes(xintercept = as.numeric(as.Date("2020-03-23"))), color = "Black", linetype = 2, size = 1, show.legend = F) +
+    scale_colour_manual(values = cols, name = "")
+
+  # getting max y axis value
+  min <- as.numeric(ggplot_build(p)$layout$panel_params[[1]]$y.range)[1]
+  max <- as.numeric(ggplot_build(p)$layout$panel_params[[1]]$y.range)[2]
+    middle <- (max + min) / 2
+
+# then create plotly graph
+   ggplotly(p, tooltip = "text") %>%
+    #config(displayModeBar = F) %>%
+    layout(xaxis = list(fixedrange = F)) %>%
+    layout(yaxis = list(fixedrange = F)) %>%
+     layout(legend = list(orientation = "h",
+                   y = 1.05, x = 0.25)) %>%
+  layout(annotations = list(x = as.numeric(as.Date("2020-03-23")) - 5, y = middle, text = "Lockdown announced", showarrow = F, textangle = -90))
+   
+  
+
+})
+
+
+```
+
+
+### Percentage change
+```{r}
+
+# this defines final output for the row
+#fillCol(flex = 1, plotlyOutput("pct_change_demog", height = "100%")) #, textOutput("pct_change_demog_text"))
+
+# getting comparator selected
+ pct_week_or_year <- reactive({
+    if (input$pct_comparator_demog == "Current vs. Previous Week") {
+"pct_diff_last_week"
+  }else if (input$pct_comparator_demog == "Current vs. Equivalent Week in 2019"){
+  pct_week_or_year <- "pct_diff_last_year"
+  }else if(input$pct_comparator_demog == "Weekly average year to date 2020 vs. 2019"){
+   pct_week_or_year <- "pct_ytd_diff"
+  } else{
+    pct_week_or_year <- "pct_four_week_diff"
+  }
+ })
+
+ # getting demographic group selected
+pct_comparator_demog <- reactive({tolower(input$pct_comparator_demog)})
+
+selected_demog_summary <- reactive({
+
+  # joining group order to group summary data
+group_summary2 <-
+  group_summary()%>%
+   left_join(select(selected_cleaned_data(), Category, Group, Sub_Group, Indicator, group_order_col), by = c("Category", "Group", "Sub_Group", "Indicator"))
+  
+ df <-  group_summary2 %>%
+  filter(Category == category() & Group == demog() & Indicator == indicator_demog())%>%
+ # filter(Category == "Total Food & Drink" & Group == "Social Class" & Indicator == "Volume")%>%
+#  filter(Category == "Category 1" & Group == "Vulnerable Groups" & Indicator == "Penetration")%>%
+  select(Sub_Group, Category, Group, Indicator, pct_week_or_year(), group_order_col)%>%
+ rename(pct_diff = pct_week_or_year())%>%
+#    select(Category, Group, Sub_Group, Indicator, pct_diff_last_week, group_order_col)%>%
+ # rename(pct_diff = pct_diff_last_week)%>%
+   # editing order by giving the total a v high number to force to top
+   mutate(group_order_col = ifelse(Sub_Group == "Total", -100000000, group_order_col),
+     # editing colour
+         Colour = ifelse(Sub_Group == "Total", "#A4AEB5", "#822433"))%>%
+ arrange(desc(group_order_col))
+
+    # lock in order of sub groups
+df$Sub_Group <- factor(df$Sub_Group, levels = unique(df$Sub_Group))
+
+return(df)
+})
+
+# THIS WAS USED FOR DYNAMIC TEXT WHICH IS CURRENTLY HASHED OUT
+  # extracting largest % diff (can't be total) - issue if more than one?
+ # largest_diff_group <- reactive({
+#   x <-  filter(selected_demog_summary(), abs(pct_diff) == max(abs(pct_diff)) & !grepl("Total", Sub_Group))%>%
+#     mutate(Sub_Group = as.character(Sub_Group))%>%
+#                                 pull(Sub_Group)
+   # adding 'the' to regions where needed
+#region_the <- which(grepl("South|East|Midlands|North|West", x))
+#x[region_the] <- paste("the ", x[region_the])
+#  x2 <- paste0(x, collapse = ", ")
+#  return(x2)
+#  })
+
+ # largest_diff_value <- reactive({
+#    filter(selected_demog_summary(), abs(pct_diff) == max(abs(pct_diff)) & !grepl("Total", Sub_Group))%>%
+#                                 pull(pct_diff)
+#})
+
+
+  # creating bar chart
+#output$pct_change_demog <- 
+renderPlotly({
+  
+        validate(
+       need(nrow(selected_demog_summary()) > 0 , "Please select a valid indicator")
+      )
+  
+   # create static ggplot
+  p <- ggplot(selected_demog_summary(), aes(x = Sub_Group, y = round_half_up(pct_diff,1), fill = Colour,
+                                  text = paste0("<b>", ifelse(round_half_up(pct_diff,1) >= 0, "+", ""), format(round_half_up(pct_diff,1), nsmall = 1), "% </b> <br>", Indicator))) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip() +
+    labs(x = NULL, y = paste0(indicator_demog(), " - Percentage change (%)"),
+         title = paste0(input$pct_comparator_demog),
+         subtitle = paste0(indicator_demog(), " - ", demog(), " - ", ifelse(category() == "Total Food & Drink", "All Categories", category())))+
+         #caption = paste0("Current Week: ", format(as.Date(current_week(), format = "%Y.%m.%d"), "%d %B %Y"))) +
+    geom_hline(yintercept = 0, color = "black",  size = 0.35, show.legend = F) +
+    scale_y_continuous(breaks= pretty_breaks(), expand = expansion(mult = c(.02, .02))) +
+    theme(panel.grid.major = element_blank(), legend.position = "none") +
+  scale_fill_identity()
+    #scale_fill_manual(values = cols)
+
+  # then create plotly graph
+   ggplotly(p, tooltip = "text") %>%
+    #config(displayModeBar = F) %>%
+    layout(xaxis = list(fixedrange = T)) %>%
+    layout(yaxis = list(fixedrange = T))%>%
+  layout(title = list(text = paste0('<b>', input$pct_comparator_demog, '</b>',
+                                    '<br>',
+                                    '<sup>',
+                                    indicator_demog(), " - ", demog(), " - ", ifelse(category() == "Total Food & Drink", "All food & drink categories", category()),
+                                    '</sup>')))
+})
+
+#hashing this out for time being
+#output$pct_change_demog_text <- renderText({
+# ifelse(
+   # if group is 'Overall'...
+#   demog() == "Overall", paste0("The overall percentage change from the ", pct_comparator_demog(), " is ",
+#                                     ifelse(largest_diff_value()<0, "-", "+"),round_half_up(largest_diff_value(),1), "%"),
+   # if there's multiple sub-groups tied for largest difference...
+#   ifelse(grepl(", ",largest_diff_group()), paste0("The ", gsub("Groups", "", demog()), ifelse(grepl("Region", demog()), "s"," groups")," with the largest #absolute percentage change from the ", pct_comparator_demog(), ifelse(grepl("Region", demog()), " are "," are groups "), largest_diff_group(), " (", #ifelse(largest_diff_value()<0, "", "+"),round_half_up(largest_diff_value(),1), "%)"),
+   # else
+ #       paste0("The ", gsub("Groups", "", demog()), ifelse(grepl("Region", demog()), ""," group")," with the largest absolute percentage change from the ", #pct_comparator_demog(), ifelse(grepl("Region", demog()), " is "," is group "), largest_diff_group(), " (",
+ #              ifelse(largest_diff_value()<0, "", "+"),round_half_up(largest_diff_value(),1), "%)")))
+#})
+
+```
+
+
+
+Row
+-------------------------------------
+
+### Summary table
+```{r demographic summary table}
+
+# extracting columns needed / renaming / reformating
+# literally same as overall DT but have also filtered by indicator and included sub-group in output whilst removing indicator
+demog_summary <- reactive({
+ filter(group_summary(), Category == category() & Group == demog() & Indicator == indicator_demog())%>%
+  mutate(!! demog() := Sub_Group,
+    !! paste0("Current Week (",format(as.Date(current_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(Current_Week,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(Current_Week,1), nsmall = 1),
+                  format(round_half_up(Current_Week,0), big.mark = ","))),
+         !! paste0("Previous Week (",format(as.Date(previous_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(Previous_Week,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(Previous_Week,1), nsmall = 1),
+                  format(round_half_up(Previous_Week,0), big.mark = ","))),
+         !! paste0("Current Week in 2019 (",format(as.Date(last_year_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(Last_Year_Week,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(Last_Year_Week,1), nsmall = 1),
+                  format(round_half_up(Last_Year_Week,0), big.mark = ","))),
+         !! paste0("Latest 4 week average in 2020 (weeks ", as.numeric(week_number())-3, " to ", week_number(), ")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(four_week_stat_20,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(four_week_stat_20,1), nsmall = 1),
+                  format(round_half_up(four_week_stat_20,0), big.mark = ","))),
+         !! paste0("Latest 4 week average in 2019 (weeks ", as.numeric(week_number())-3, " to ", week_number(), ")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(four_week_stat_19,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(four_week_stat_19,1), nsmall = 1),
+                  format(round_half_up(four_week_stat_19,0), big.mark = ","))),
+         !! paste0("Year to date average in 2020 (", as.numeric(week_number()), " weeks)") := 
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(ytd_stat_20,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(ytd_stat_20,1), nsmall = 1),
+                  format(round_half_up(ytd_stat_20,0), big.mark = ","))),
+         !! paste0("Year to date average in 2019 (", as.numeric(week_number()), " weeks)") := 
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(ytd_stat_19,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(ytd_stat_19,1), nsmall = 1),
+                  format(round_half_up(ytd_stat_19,0), big.mark = ","))),
+         "Percentage change from previous week (%)" = format(round_half_up(pct_diff_last_week,1), nsmall = 1),
+         "Percentage change from current week in 2019 (%)" = format(round_half_up(pct_diff_last_year,1), nsmall = 1),
+         "Latest 4 week percentage change from 2019 (%)" = format(round_half_up(pct_four_week_diff,1), nsmall = 1),
+         "Year to date percentage change from 2019 (%)" = format(round_half_up(pct_ytd_diff,1), nsmall = 1))%>%
+  select(-c(Sub_Group, Indicator, Category, Group, Current_Week, Previous_Week, Last_Year_Week, ytd_stat_20, ytd_stat_19, four_week_stat_20,
+            four_week_stat_19, pct_diff_last_week, pct_diff_last_year, pct_ytd_diff, pct_four_week_diff))
+})
+
+
+#Creating datatable
+DT::renderDataTable({
+  datatable(demog_summary(), rownames = FALSE,
+            caption = paste0(ifelse(indicator_demog() == "Penetration", paste0(indicator_demog(), " (%)"), ifelse(indicator_demog() == "Calories", paste0(indicator_demog(), " (million kcals)"), ifelse(indicator_demog() == "Volume Per Trip", paste0(indicator_demog(), " (kg, litres and servings)"),
+                      ifelse(grepl("Fat|Fibre|Sodium|Sugar|Saturate|Protein|Carb", indicator_demog()) | indicator_demog() == "Volume", paste0(indicator_demog(), " (tonnes, kilolitres and thousand servings)"), indicator_demog())))),
+                             " - ", demog(), " - ", ifelse(category() == "Total Food & Drink", "All food & drink categories", category())),
+          extensions = c('Buttons'),#, 'FixedColumns', 'Scroller'),
+    options = list(dom = 'Bt',
+                   pageLength = nrow(demog_summary()),
+    buttons = list('colvis', list(extend = 'copy', title = NULL)),
+  #scrollX = TRUE, fixedColumns = list(leftColumns = 1),
+    columnDefs = list(list(className = 'dt-right', targets = 1:(length(demog_summary())-1))),
+  initComplete = JS(
+    "function(settings, json) {",
+    "$('body').css({'font': '12px Arial'});",
+    "}"
+  )))%>%
+  formatStyle(columns = colnames(demog_summary()), fontSize = '11px')%>%
+  formatStyle(colnames(demog_summary())[1], fontWeight = 'bold')
+})
+
+```
+
+
+
+Category Breakdown {data-navmenu="Menu"}
+=======================================================================
+### <span style="color: red;font-weight:bold">RESTRICTED - not for public sharing</span>
+
+### **Category Breakdown**
+
+Row
+-----------------------------------------------------------------------
+
+### Current Week
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("category_cw"))
+
+output$category_cw <- flexdashboard::renderValueBox({
+  flexdashboard::valueBox(format(as.Date(current_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")
+  })
+```
+
+### Week Number
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("category_wn"))
+
+output$category_wn <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(week_number(), color = "#98a4ae")})
+```
+
+### Previous Week
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("category_pw"))
+
+output$category_pw <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(format(as.Date(previous_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")})
+```
+
+### Equivalent Week in 2019
+
+```{r}
+fillRow(flex = 1, flexdashboard::valueBoxOutput("category_lyw"))
+
+output$category_lyw <- 
+  flexdashboard::renderValueBox({flexdashboard::valueBox(format(as.Date(last_year_week(), format = "%Y.%m.%d"), "%d %B %Y"), color = "#98a4ae")})
+```
+
+
+Column {.sidebar data-width=260}
+--------------------------------------------------
+
+<br>
+```{r}
+
+# allows user to select indicator of interest (no nutrient breakdown at category level)
+selectInput(
+  "indicator_category", label = HTML('<b>Indicator:</b>'),
+  choices = c("Volume", "Penetration", "Trips Per Household", "Volume Per Trip"), selected = "Volume"
+)
+
+# allows user to select which categories to show (all are selected as default)
+pickerInput(
+  inputId = "category_picker",
+  label = HTML('<b>Category:</b>'),
+  choices = cat_pick_list,
+  selected = parent_cats,
+  options = list(
+    `actions-box` = TRUE,
+    #size = 10,
+   # `style` = "btn-default",
+    `selected-text-format` = "count > 1"
+  ),
+  choicesOpt = list(
+      style = rep_len("font-size: 75%;", sum(lengths(cat_pick_list)))), 
+  multiple = TRUE
+)
+
+p("Note: All parent categories are selected as default. Press 'select all' in the category dropdown menu to additionally view all subcategories. Consider that some subcategories may be showing extreme percentage changes due to small numbers.")
+br()
+
+# getting pct change comparator selection
+radioButtons(
+  "pct_comparator_category", label = HTML('<b>Percentage change comparator:</b>'),
+  choices = c("Current vs. Equivalent Week in 2019", "Current vs. Previous Week", "Weekly average of latest 4 weeks 2020 vs. 2019", "Weekly average year to date 2020 vs. 2019")
+)
+
+ # extracting input values
+indicator_category <- reactive({input$indicator_category})
+category_picker <- reactive({input$category_picker})
+
+
+```
+
+
+Row{data-height=900}
+-------------------------------------
+
+### Trend over time
+```{r}
+
+# this defines final output for the row
+#fillRow(flex = 1, plotlyOutput("category_trend", height = "100%"))
+
+   # extract relevant data
+selected_category_data <- reactive({
+   validate(
+        need(input$category_picker != "", "Please select at least one category")
+      )
+df <-  filter(selected_cleaned_data(), Category %in% category_picker() & Indicator == indicator_category() & Group == "Overall")%>%
+  #filter(cleaned_data, Indicator == "Volume" & Group == "Overall")%>%
+   pivot_longer(cols = starts_with("w.e"),
+                 names_to = "Week",
+                 values_to = "Value")%>%
+    # turning week names into dates
+    mutate(Week = as.Date(gsub("w.e.","", Week), format = "%Y.%m.%d"))%>%
+  # removing 'Total Food & Drink' category as skews axis
+  filter(Category != "Total Food & Drink")%>%
+   # editing order col by giving the total a v high number to force to first position
+   #mutate(category_order_col = ifelse(Category == "Total Food & Drink", -100000000, category_order_col))%>%
+ arrange(category_order_col)
+
+    # lock in order of categories
+df$Category <- factor(df$Category, levels = unique(df$Category))
+
+return(df)
+})
+
+# extracting indicator unit
+unit_category <- reactive({
+x <-if(indicator_category() == "Penetration"){
+"%"
+  }else if(indicator_category() == "Volume Per Trip"){
+"kg, litres and servings"
+  }else if(indicator_category() == "Trips Per Household"){
+"trips"
+  }else if(indicator_category() == "Calories"){
+"million kcals"
+  }else{
+    "tonnes, kilolitres and thousand servings"
+  }
+return(x)
+})
+
+# Creating Line graph of trend over time
+#output$category_trend <- 
+  renderPlotly({
+   # getting colours/names needed for plot
+  cols <- selected_category_data()%>%
+      pull(category_colour)
+names(cols) <-  selected_category_data()%>%
+    pull(Category)
+
+   # getting line type/names needed for plot
+  lines <- selected_category_data()%>%
+      pull(category_line)
+names(lines) <-  selected_category_data()%>%
+    pull(Category)
+
+# bold labelling
+#bold.labels <- ifelse(levels(as.factor(selected_category_data()$Category)) %in% parent_cats, yes = "bold", no = "plain")
+
+# pulling out min value to determine number of dps presented
+
+  p <- ggplot(selected_category_data(), aes(x = Week, y = Value, group = Category, colour = Category, linetype = Category,
+                                  text = paste0("<b>", Category,"<br>", 
+                                                ifelse(Value < 0.5, format(round_half_up(Value,3), nsmall = 3), 
+                                                ifelse(Value < 1, format(round_half_up(Value,2), nsmall = 2), 
+                                                ifelse(Value < 100, format(round_half_up(Value,1), nsmall = 1), 
+                                                format(round_half_up(Value,0),big.mark = ",")))) ,
+                                                "</b> ",unit_category(),"<br>",
+                                                format(Week, "%d %B %Y")))) +
+    geom_line(size = 1) +
+    scale_x_date(breaks= every_other_month(), expand = c(0.005, 0.4), date_labels = "%d-%b-%y") +
+    scale_y_continuous(breaks= pretty_breaks(), limits = c(0, range(pretty_breaks()(selected_category_data()%>%pull(Value)))[2]),
+                       expand = expansion(mult = c(0, .1)), labels = comma) +
+    labs(x = "Week", y = paste0(indicator_category(), " (", unit_category(), ")"),
+         title = paste0(indicator_category())) +
+    # adding extra info to chart
+    geom_vline(aes(xintercept = as.numeric(as.Date("2020-03-23"))), color = "Black", linetype = 2, size = 1, show.legend = F) +
+    scale_colour_manual(values = cols, name = "")+
+    scale_linetype_manual(values = lines, name = "")#+
+    #theme(legend.text = element_markdown(face = ifelse(selected_category_data()$Category %in% parent_cats, "bold", "plain")))
+
+  # getting max y axis value
+  min_cat <- as.numeric(ggplot_build(p)$layout$panel_params[[1]]$y.range)[1]
+  max_cat <- as.numeric(ggplot_build(p)$layout$panel_params[[1]]$y.range)[2]
+    middle_cat <- (max_cat + min_cat) / 2
+
+# then create plotly graph
+   ggplotly(p, tooltip = "text") %>%
+    #config(displayModeBar = F) %>%
+    layout(xaxis = list(fixedrange = T)) %>%
+    layout(yaxis = list(fixedrange = T)) %>%
+     layout(legend = list(orientation = "v")) %>%
+  layout(annotations = list(x = as.numeric(as.Date("2020-03-23")) - 5, y = middle_cat, text = "Lockdown announced", showarrow = F, textangle = -90))
+
+})
+
+
+```
+
+Row{data-height=900}
+-------------------------------------------------------
+
+### Percentage change
+```{r}
+
+# this defines final output for the row
+#fillRow(flex = 1, plotlyOutput("pct_change_category", height = "100%"))
+
+# getting comparator selected
+ pct_week_or_year_category <- reactive({
+    if (input$pct_comparator_category == "Current vs. Previous Week") {
+"pct_diff_last_week"
+  }else if (input$pct_comparator_category == "Current vs. Equivalent Week in 2019"){
+  pct_week_or_year <- "pct_diff_last_year"
+  }else if(input$pct_comparator_category == "Weekly average year to date 2020 vs. 2019"){
+   pct_week_or_year <- "pct_ytd_diff"
+  }else{
+    pct_week_or_year <- "pct_four_week_diff"
+  }
+  })
+
+ # getting comparator selected
+pct_comparator_category <- reactive({tolower(input$pct_comparator_category)})
+
+
+  # now filter category data based on selection and produce same graphs as for overall
+  selected_category_summary <- reactive({
+ validate(
+        need(input$category_picker != "", "Please select at least one category")
+      )
+# joining category order to group summary data
+group_summary2 <- group_summary()%>%
+   left_join(select(selected_cleaned_data(), Category, category_order_col), by = "Category")
+
+ df <-  group_summary2 %>%
+ filter(Category %in% category_picker() & Group == "Overall" & Indicator == indicator_category())%>%
+  select(Category, Group, Indicator, pct_week_or_year_category(), category_order_col)%>%
+  rename(pct_diff = pct_week_or_year_category()) %>%
+    # joining colour and order info to data frame
+    left_join(select(selected_cleaned_data(), Category, Group, Indicator), by = c("Category", "Group", "Indicator"))%>%
+   # editing order by giving the total a v high number to force to top and giving all the rest the same
+   mutate(category_order_col = ifelse(Category == "Total Food & Drink", -100000000, 1),
+          Colour = ifelse(Category == "Total Food & Drink", "#A4AEB5", "#822433"))%>%
+ arrange(desc(category_order_col),pct_diff)
+
+    # lock in order of categories (based on pct difference value)
+df$Category <- factor(df$Category, levels = unique(df$Category))
+
+return(df)
+})
+
+# creating bar chart
+#output$pct_change_category <- 
+  renderPlotly({
+   # create static ggplot
+  p <- ggplot(selected_category_summary(), aes(x = Category, y = round_half_up(pct_diff,1), fill = Colour,
+                                  text = paste0("<b>", Category, "<br>", ifelse(round_half_up(pct_diff,1) >= 0, "+", ""), format(round_half_up(pct_diff,1), nsmall = 1), "% </b> <br>", Indicator))) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip() +
+    labs(x = NULL, y = paste0(indicator_category(), " - Percentage change (%)"),
+         title = paste0(input$pct_comparator_category),
+         subtitle = paste0(indicator_category())) +
+    geom_hline(yintercept = 0, color = "black",  size = 0.35, show.legend = F) +
+    scale_y_continuous(breaks= pretty_breaks(), expand = expansion(mult = c(.02, .02))) +
+    theme(panel.grid.major = element_blank(), legend.position = "none") +
+  scale_fill_identity()
+    #scale_fill_manual(values = cols)
+
+  # then create plotly graph
+   ggplotly(p, tooltip = "text") %>%
+    #config(displayModeBar = F) %>%
+    layout(xaxis = list(fixedrange = T)) %>%
+    layout(yaxis = list(fixedrange = T))%>%
+  layout(title = list(text = paste0('<b>', input$pct_comparator_category, '</b>',
+                                    '<br>',
+                                    '<sup>',
+                                    indicator_category(),
+                                    '</sup>')))
+})
+
+
+
+```
+
+
+Row
+-------------------------------------
+
+### Summary table
+```{r category summary table}
+
+# extracting columns needed / renaming / reformating
+category_summary <- reactive({
+  filter(group_summary(), Category %in% category_picker() & Group == "Overall" & Indicator == indicator_category())%>%
+  mutate(!! paste0("Current Week (",format(as.Date(current_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(Current_Week,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(Current_Week,1), nsmall = 1),
+                  format(round_half_up(Current_Week,0), big.mark = ","))),
+         !! paste0("Previous Week (",format(as.Date(previous_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(Previous_Week,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(Previous_Week,1), nsmall = 1),
+                  format(round_half_up(Previous_Week,0), big.mark = ","))),
+         !! paste0("Current Week in 2019 (",format(as.Date(last_year_week(), format = "%Y.%m.%d"), "%d/%m/%y"),")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(Last_Year_Week,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(Last_Year_Week,1), nsmall = 1),
+                  format(round_half_up(Last_Year_Week,0), big.mark = ","))),
+         !! paste0("Latest 4 week average in 2020 (weeks ", as.numeric(week_number())-3, " to ", week_number(), ")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(four_week_stat_20,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(four_week_stat_20,1), nsmall = 1),
+                  format(round_half_up(four_week_stat_20,0), big.mark = ","))),
+         !! paste0("Latest 4 week average in 2019 (weeks ", as.numeric(week_number())-3, " to ", week_number(), ")") :=
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(four_week_stat_19,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(four_week_stat_19,1), nsmall = 1),
+                  format(round_half_up(four_week_stat_19,0), big.mark = ","))),
+         !! paste0("Year to date average in 2020 (", as.numeric(week_number()), " weeks)") := 
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(ytd_stat_20,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(ytd_stat_20,1), nsmall = 1),
+                  format(round_half_up(ytd_stat_20,0), big.mark = ","))),
+         !! paste0("Year to date average in 2019 (", as.numeric(week_number()), " weeks)") := 
+           ifelse(Indicator %in% c("Trips Per Household", "Volume Per Trip"), format(round_half_up(ytd_stat_19,3), nsmall = 3),
+                  ifelse(Indicator == "Penetration", format(round_half_up(ytd_stat_19,1), nsmall = 1),
+                  format(round_half_up(ytd_stat_19,0), big.mark = ","))),
+         "Percentage change from previous week (%)" = format(round_half_up(pct_diff_last_week,1), nsmall = 1),
+         "Percentage change from current week in 2019 (%)" = format(round_half_up(pct_diff_last_year,1), nsmall = 1),
+         "Latest 4 week percentage change from 2019 (%)" = format(round_half_up(pct_four_week_diff,1), nsmall = 1),
+         "Year to date percentage change from 2019 (%)" = format(round_half_up(pct_ytd_diff,1), nsmall = 1))%>%
+    # getting parent category
+    left_join(select(cleaned_data, Parent_Category, Category)%>%distinct(), by = "Category")%>%rename(`Parent Category` = Parent_Category)%>%
+  select(-c(Sub_Group, Indicator, Group, Current_Week, Previous_Week, Last_Year_Week, ytd_stat_20, ytd_stat_19, four_week_stat_20,
+            four_week_stat_19, pct_diff_last_week, pct_diff_last_year, pct_ytd_diff, pct_four_week_diff))
+})
+
+#Creating datatable
+DT::renderDataTable({
+  datatable(category_summary(), rownames = FALSE,
+            caption = ifelse(indicator_category() == "Penetration", paste0(indicator_category(), " (%)"), ifelse(indicator_category() == "Calories", paste0(indicator_category(), " (million kcals)"), ifelse(indicator_category() == "Volume Per Trip", paste0(indicator_category(), " (kg, litres and servings)"),
+                      ifelse(grepl("Fat|Fibre|Sodium|Sugar|Saturate|Protein|Carb", indicator_category()) | indicator_category() == "Volume", paste0(indicator_category(), " (tonnes, kilolitres and thousand servings)"), indicator_category())))),
+          extensions = c('Buttons'), #, 'FixedColumns', 'Scroller'),
+    options = list(dom = 'Bfrtip',
+    buttons = list('colvis', list(extend = 'copy', title = NULL)),
+    pageLength = nrow(category_summary()),
+  #scrollX = TRUE, fixedColumns = list(leftColumns = 1),
+    columnDefs = list(list(className = 'dt-right', targets = 1:(length(category_summary())-1))),
+  initComplete = JS(
+    "function(settings, json) {",
+    "$('body').css({'font': '12px Arial'});",
+    "}"
+  )))%>%
+  formatStyle(columns = colnames(category_summary()), fontSize = '11px')%>%
+  formatStyle(colnames(category_summary())[1], fontWeight = 'bold')
+})
+
+```
+
+
+About {data-icon="fa-info-circle" data-navmenu="Menu"}
+=======================================================================
+
+### <span style="color: red;font-weight:bold">RESTRICTED - not for public sharing</span>
+
+Row {.text_pages_about data-height=1500}
+-----------------------------------------------------------------------
+### About  
+
+#### Data Source
+  
+- The analysis is using commercially available data from Kantar Worldpanel’s take home consumer panel. The data is provided on a weekly basis dating back to January 2019. 
+- Kantar Worldpanel is a global market research business which runs a continuous reporting panel of 30,000 households across Great Britain, recording details of all food and drink purchases brought in to the home, including the volume of sales. 
+- Kantar Worldpanel’s sample of households reflects the demographic makeup of the British population. Demographic targets for the sample are based on region, social class, age of main shopper, household composition and household size. The data collected are weighted to provide a representative picture of total food and drink purchasing in Great Britain over the time period for which data are provided. 
+- Products consumed out of the home are not captured in this analysis, and purchasing habits are being analysed opposed to actual consumption as wastage cannot be accurately adjusted for.  
+- The weekly purchasing data may inaccurately represent the purchasing habits of households that are not currently purchasing all of their own food, and households who are purchasing food on behalf of others. Purchases which are passed onto another household, e.g. adult child buying for elderly parent(s), is likely to be included according to who made the initial purchase, e.g. adult child.   
+  
+  <br>  
+  
+#### Indicator definitions
+- **Volume** - the total mass of goods (or nutrients) purchased, measured in tonnes (for solid products), kilolitres (for liquids) or thousand servings (for certain categories and products that are measured in servings eg. morning goods). The overall total of all food categories is a simple sum of both tonnes, kilolitres and thousand servings.    
+- **Penetration** - the percentage of households purchasing goods in the weekly time period  
+- **Trips per household** - the weekly average number of trips to a shop by a household where goods were purchased and brought in to the home  
+- **Volume per trip** - the average total mass of goods purchased per trip, measured in kilograms (for solid products), litres (for liquids) or servings (for certain categories and products that are measured in servings eg. morning goods)  
+ 
+  <br>  
+  
+#### Percentage change comparator definitions 
+- **Current vs. Equivalent Week in 2019** - The percentage change between weekly data for the indicator in the current week and the same week number in 2019 eg. week number 20 in 2020 vs. week number 20 in 2019 
+- **Current vs. Previous Week** - The percentage change between weekly data for the indicator in the current week and the preceding week  
+- **Weekly average of latest 4 weeks 2020 vs. 2019** - The percentage change between an average of the weekly data in the previous 4 weeks of 2020 and an average of the weekly data in 2019 for the same 4 week period eg. a an average of weeks 17 to 20 in 2020 (as the current week number is 20) vs. an average of weeks 17 to 20 in 2019. This average is based on all available timepoints, which may be less than 4 weeks for a minority of small subcategory - demographic breakdowns if a subcategory was not recorded as being purchased by that demographic group in a particular week.   
+- **Weekly average year to date 2020 vs. 2019** - The percentage change between an average of the weekly data for the indicator from the first week in 2020 to date and an average of the weekly data from the first week in 2019 for the same number of weeks eg. a 20 week average in 2020 (as the current week number is 20) vs. a 20 week average in 2019. This average is based on all available timepoints, which may be less than the total number of weeks to date for a minority of small subcategory - demographic breakdowns if a subcategory was not recorded as being purchased by that demographic group in a particular week. 
+  
+**Note:** As penetration is measured as a percentage, the percentage change for this indictor is produced by calculating the difference in percentage points (X% - Y%) as opposed to calculating the percentage change of a percentage ((X% - Y%) / Y%).  
+
+  
+  <br>
+
+#### Demographic group definitions 
+- **Lifestage** - The stage of life of the main shopper in the household  
+- **Region** - The area of Great Britain that the household is situated (note Wales and Scotland data is provided at a country level only). These are Government Office Regions.  
+- **Rural / Urban Split** - Households are divided into those located in rural and urban areas
+- **Social Class** - Each household is assigned to a social class group based on the head of the household:
+  * *AB* - higher and intermediate managerial, administrative and professional workers
+  * *C1* - supervisory, clerical and junior managerial, administrative and professional workers
+  * *C2* - skilled manual workers
+  * *D* - semi-skilled and unskilled manual workers
+  * *E* - people on long term state benefits, casual and lowest grade workers, unemployed with state benefits (including pension) only
+- **Vulnerable Groups** - It is possible to identify within the Kantar data two subgroups who may be more vulnerable to the impacts of Covid-19 than others.  They are:  
+  - the main shopper is aged 70+ years: 
+  - the household is in social classes D or E and children live in the household.
+  
+  
+  <br>
+  
+#### Further Information  
+For enquiries or further information please contact Francesca Parrott (<francesca.parrott@defra.gov.uk>) or Nina Sal (<nina.sal@defra.gov.uk>) 
