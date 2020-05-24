@@ -77,7 +77,7 @@ library(lubridate)
 # check order of these if conflicts arise...
 
 ######### Import most recent dataset ---------------------------------------------------------------
-cleaned_data_initial <- read.csv("Current_Week_cleaned_data.csv", stringsAsFactors = F)
+cleaned_data_initial <- read.csv("S:/Analysis/Covid-19/Kantar/dashboard/Current_Week_cleaned_data.csv", stringsAsFactors = F)
 
 ######### splitting out alcohol data (for its own alcohol tab)
 alcohol_data <- filter(cleaned_data_initial, Group == "Alcohol ABV")
