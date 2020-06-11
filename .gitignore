@@ -3,6 +3,7 @@
 .RData
 .Ruserdata
 *.csv
+*.zip
 /data
 .csv
 .rds
@@ -11,3 +12,4 @@
 .xlsx
 .docx
 .doc
+.zip
