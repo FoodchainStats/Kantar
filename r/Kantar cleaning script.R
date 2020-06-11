@@ -7,7 +7,7 @@ setwd("S:\\Analysis\\Covid-19\\Kantar")
 ## Importing category subcategory lookup
 cat_lookup <- read.csv("data/Category Subcategory grid with units.csv", stringsAsFactors = F)
 
-path <- "data/2020_05_10 Kantar Take Home Weekly Data Raw.xlsx"
+path <- "data/2020_05_31 Kantar Take Home Weekly Data Raw.xlsx"
 sheetnames <- excel_sheets(path)
 mylist <- lapply(excel_sheets(path), read_excel, path = path)
 
@@ -265,7 +265,9 @@ cleaned_data <- cleaned_data %>%
 
 
 # removing certain groups info for now
-cleaned_data_filtered <- filter(cleaned_data, Group!="Social Class by Region" & Group!="Top 10 Manufacturers" & Group!="Retailer by Region" & Group!="Retailer by Channel")
+#cleaned_data_filtered <- filter(cleaned_data, Group!="Social Class by Region" & Group!="Top 10 Manufacturers" & Group!="Retailer by Region" & Group!="Retailer by Channel")
+cleaned_data_filtered <- cleaned_data
+
 
 ################################ Assigning consistent colours to groups / categories ------------------------------------
 # phe pallette
@@ -370,6 +372,6 @@ cleaned_data_filtered <- cleaned_data_filtered[,c(ncol(cleaned_data_filtered)-13
 
 
 #### writing this edited data as a csv file - THIS IS THE CSV FILE FED INTO THE DASHBOARD
-fwrite(cleaned_data_filtered, "dashboard/Current_Week_cleaned_data.csv", row.names = F )
+fwrite(cleaned_data_filtered, "Current_Week_cleaned_data.csv", row.names = F )
 
 
