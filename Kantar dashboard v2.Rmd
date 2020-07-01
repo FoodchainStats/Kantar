@@ -77,7 +77,7 @@ library(lubridate)
 # check order of these if conflicts arise...
 
 ######### Import most recent dataset ---------------------------------------------------------------
-cleaned_data_initial <- read.csv("Current_Week_cleaned_data.csv", stringsAsFactors = F)
+cleaned_data_initial <- read.csv("S:/Analysis/Covid-19/Kantar/Current_Week_cleaned_data.csv", stringsAsFactors = F)
 
 ######### splitting out alcohol data (for its own alcohol tab)
 alcohol_data <- filter(cleaned_data_initial, Group == "Alcohol ABV")
@@ -1337,11 +1337,13 @@ selectInput(
 )
 
 # allows user to select which categories to show (all are selected as default)
+key_cats <- c("Total Food & Drink","Alcohol","Canned Goods","Dairy Products","Fresh Fish","Fresh Meat","Fresh Poultry+Game","Frozen Fish","Frozen Meat","Frozen Poultry+Game",
+              "Frozen Prepared Foods","Fruit+Veg+Salads","Household+Cleaning Products")  
 pickerInput(
   inputId = "category_picker",
   label = HTML('<b>Category:</b>'),
   choices = cat_pick_list,
-  selected = parent_cats,
+  selected = key_cats,
   options = list(
     `actions-box` = TRUE,
     #size = 10,
